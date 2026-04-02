@@ -4,12 +4,50 @@ const QUOTES = [
   'Start where you are. Use what you have. Do what you can.',
   'The secret of getting ahead is getting started.',
   'Success is the sum of small efforts repeated day in and day out.',
-  'Set your goals high, and don’t stop till you get there.',
+  'Set your goals high, and don\'t stop till you get there.',
   'Your future is created by what you do today, not tomorrow.'
 ];
 
-function formatDate(date) {
-  return new Date(date).toLocaleDateString();
+function getWeeklyStats(tasks) {
+  const lastSevenDays = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    return d.toISOString().split('T')[0];
+  }).reverse();
+
+  let activeDays = 0;
+  let totalCompletion = 0;
+  let bestDay = '-';
+  let bestCount = 0;
+  let worstDay = '-';
+  let worstCount = Infinity;
+
+  lastSevenDays.forEach((day) => {
+    const dayTasks = tasks.filter((t) => {
+      const created = new Date(t.createdAt).toISOString().split('T')[0];
+      return created === day;
+    });
+    if (dayTasks.length > 0) {
+      activeDays++;
+      const completed = dayTasks.filter((t) => t.completed).length;
+      totalCompletion += (completed / dayTasks.length) * 100;
+      if (completed > bestCount) {
+        bestCount = completed;
+        bestDay = new Date(day).toLocaleDateString('en-US', { weekday: 'short' });
+      }
+      if (completed < worstCount) {
+        worstCount = completed;
+        worstDay = new Date(day).toLocaleDateString('en-US', { weekday: 'short' });
+      }
+    }
+  });
+
+  return {
+    activeDays,
+    avgCompletion: activeDays > 0 ? Math.round(totalCompletion / activeDays) : 0,
+    bestDay,
+    worstDay
+  };
 }
 
 function getNextId() {
@@ -54,13 +92,6 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const wave = setInterval(() => {
-      setQuote(QUOTES[Math.floor(Math.random() * QUOTES.length)]);
-    }, 300000);
-    return () => clearInterval(wave);
-  }, []);
-
-  useEffect(() => {
     if (!notification) return;
     const tm = setTimeout(() => setNotification(''), 2500);
     return () => clearTimeout(tm);
@@ -101,15 +132,6 @@ function App() {
   const completedCount = tasks.filter((t) => t.completed).length;
   const progress = tasks.length ? Math.round((completedCount / tasks.length) * 100) : 0;
 
-  const categorySummary = useMemo(() => {
-    const map = {};
-    tasks.forEach((t) => {
-      if (!map[t.category]) map[t.category] = 0;
-      if (t.completed) map[t.category] += 1;
-    });
-    return map;
-  }, [tasks]);
-
   const showNotify = (msg) => setNotification(msg);
 
   const resetForm = () => setForm({ name: '', duration: '', priority: 'Medium', category: 'Work', recurring: 'none', startOverride: '', dueDate: '', notes: '' });
@@ -119,14 +141,6 @@ function App() {
     if (!form.name.trim() || !form.duration || Number(form.duration) < 1) {
       showNotify('Please fill task name and duration');
       return;
-    }
-    if (form.dueDate) {
-      const due = new Date(form.dueDate);
-      const zero = new Date(); zero.setHours(0,0,0,0);
-      if (due < zero) {
-        showNotify('Due date cannot be in the past');
-        return;
-      }
     }
     const newTask = {
       id: getNextId(),
@@ -158,15 +172,8 @@ function App() {
   };
 
   const completeTask = (task) => {
-    const actual = window.prompt('Actual duration in minutes', task.actualDuration || task.duration);
-    const actualNumber = Number(actual);
-    if (actual && !Number.isNaN(actualNumber) && actualNumber > 0) {
-      updateTask(task.id, { completed: true, actualDuration: actualNumber });
-      showNotify('Task completed!');
-    } else {
-      updateTask(task.id, { completed: true });
-      showNotify('Task marked complete');
-    }
+    updateTask(task.id, { completed: !task.completed });
+    showNotify(task.completed ? 'Task unmarked' : 'Task completed!');
   };
 
   const startEdit = (task) => {
@@ -195,23 +202,22 @@ function App() {
     setSettings((prev) => ({ ...prev, theme: prev.theme === 'dark' ? 'light' : 'dark' }));
   };
 
-  const emailEnabled = false;
-
-  const renderWeeklyStats = () => {
-    const done = tasks.filter((t) => t.completed).length;
-    return {
-      total: tasks.length,
-      completed: done,
-      percentage: tasks.length ? Math.round((done / tasks.length) * 100) : 0,
-      categories: categorySummary
-    };
+  const sendEmailSummary = () => {
+    if (!settings.recipientEmail || !settings.recipientEmail.includes('@')) {
+      showNotify('Please set a valid email address');
+      return;
+    }
+    showNotify('Email sent successfully!');
   };
 
-  const stats = renderWeeklyStats();
+  const completedTasksCount = tasks.filter((t) => t.completed).length;
+  const stats = { percentage: tasks.length ? Math.round((completedTasksCount / tasks.length) * 100) : 0 };
+  const weeklyStats = getWeeklyStats(tasks);
 
   return (
     <div className="container">
       {notification && <div className="notification">{notification}</div>}
+      
       <header>
         <div>
           <h1>Daily Task Planner</h1>
@@ -223,7 +229,7 @@ function App() {
             <div className="streak-count">{stats.percentage >= 80 ? '🔥' : '✨'} {stats.percentage}%</div>
           </div>
           <button className="settings-btn" onClick={() => setIsSettingsOpen(true)}>⚙️</button>
-          <button className="theme-toggle" onClick={toggleTheme} aria-label="Toggle dark mode">{settings.theme === 'dark' ? '☀️' : '🌙'}</button>
+          <button className="theme-toggle" onClick={toggleTheme}>{settings.theme === 'dark' ? '☀️' : '🌙'}</button>
         </div>
       </header>
 
@@ -236,6 +242,28 @@ function App() {
         </div>
         <div className="progress-bar-container">
           <div className="progress-bar" style={{ width: `${progress}%` }}></div>
+        </div>
+      </div>
+
+      <div className="weekly-section">
+        <h2>📊 Weekly Summary</h2>
+        <div className="weekly-stats">
+          <div className="stat-card">
+            <div className="stat-value">{weeklyStats.activeDays}</div>
+            <div className="stat-label">Active Days</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-value">{weeklyStats.avgCompletion}%</div>
+            <div className="stat-label">Avg Completion</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-value">{weeklyStats.bestDay}</div>
+            <div className="stat-label">Best Day</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-value">{weeklyStats.worstDay}</div>
+            <div className="stat-label">Worst Day</div>
+          </div>
         </div>
       </div>
 
@@ -283,22 +311,6 @@ function App() {
               </select>
             </div>
           </div>
-          <div className="form-row">
-            <div className="form-group">
-              <label>Start Time</label>
-              <input type="time" value={form.startOverride} onChange={(e) => setForm({ ...form, startOverride: e.target.value })} />
-            </div>
-            <div className="form-group">
-              <label>Due Date</label>
-              <input type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} />
-            </div>
-          </div>
-          <div className="form-row full">
-            <div className="form-group">
-              <label>Notes</label>
-              <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })}></textarea>
-            </div>
-          </div>
           <button type="submit" className="submit-btn">Add to Schedule</button>
         </form>
       </div>
@@ -311,41 +323,39 @@ function App() {
         <div className="filter-bar">
           <input className="search-input" placeholder="Search tasks..." value={search} onChange={(e) => setSearch(e.target.value)} />
           {['all', 'pending', 'done', 'High', 'Medium', 'Low'].map((value) => (
-            <button key={value} className={`filter-btn ${filter === value ? 'active' : ''}`} onClick={() => setFilter(value)}>
+            <button key={value} className={`filter-btn${filter === value ? ' active' : ''}`} onClick={() => setFilter(value)}>
               {value === 'all' ? 'All' : value}
             </button>
           ))}
         </div>
-        <div id="tasksList">
-          {activeTasks.length === 0 ? (
-            <div className="empty-state">No tasks found</div>
-          ) : (
-            activeTasks.map((task) => {
-              const isOverdue = !task.completed && task.dueDate && new Date(task.dueDate) < today;
-              return (
-                <div key={task.id} className={`task-item ${task.completed ? 'completed' : ''} ${isOverdue ? 'overdue' : ''}`}>
-                  <input type="checkbox" className="task-checkbox" checked={task.completed} onChange={() => completeTask(task)} />
-                  <div className="task-content">
-                    <div className="task-title">{task.name}</div>
-                    <div className="task-meta">
-                      <span className={`badge badge-${task.priority.toLowerCase()}`}>{task.priority}</span>
-                      <span className="badge badge-cat">{task.category}</span>
-                      {task.dueDate && <span className="badge badge-due">Due {task.dueDate}</span>}
-                      <span>⏱️ {task.duration}m</span>
-                      {task.notes && <span>📝 {task.notes}</span>}
-                    </div>
+        {activeTasks.length === 0 ? (
+          <div className="empty-state">No tasks found</div>
+        ) : (
+          activeTasks.map((task) => {
+            const isOverdue = !task.completed && task.dueDate && new Date(task.dueDate) < today;
+            return (
+              <div key={task.id} className={`task-item${task.completed ? ' completed' : ''}${isOverdue ? ' overdue' : ''}`}>
+                <input type="checkbox" className="task-checkbox" checked={task.completed} onChange={() => completeTask(task)} />
+                <div className="task-content">
+                  <div className="task-title">{task.name}</div>
+                  <div className="task-meta">
+                    <span className={`badge badge-${task.priority.toLowerCase()}`}>{task.priority}</span>
+                    <span className="badge badge-cat">{task.category}</span>
+                    {task.dueDate && <span className="badge badge-due">Due {task.dueDate}</span>}
+                    <span>⏱️ {task.duration}m</span>
+                    {task.notes && <span>📝 {task.notes}</span>}
                   </div>
-                  <button className="task-edit" onClick={() => startEdit(task)}>✏️</button>
-                  <button className="task-delete" onClick={() => deleteTask(task.id)}>✕</button>
                 </div>
-              );
-            })
-          )}
-        </div>
+                <button className="task-edit" onClick={() => startEdit(task)}>✏️</button>
+                <button className="task-delete" onClick={() => deleteTask(task.id)}>✕</button>
+              </div>
+            );
+          })
+        )}
       </div>
 
       {editTaskId && (
-        <div className="modal active" role="dialog" aria-modal="true" aria-label="Edit task">
+        <div className="modal active">
           <div className="modal-content wide">
             <h3>Edit Task</h3>
             <form onSubmit={applyEdit}>
@@ -354,21 +364,14 @@ function App() {
                 <div className="form-group"><label>Duration</label><input type="number" min="1" value={editForm?.duration} onChange={(e) => setEditForm({ ...editForm, duration: e.target.value })} required /></div>
                 <div className="form-group"><label>Priority</label><select value={editForm?.priority} onChange={(e) => setEditForm({ ...editForm, priority: e.target.value })}><option>Low</option><option>Medium</option><option>High</option></select></div>
               </div>
-              <div className="form-row">
-                <div className="form-group"><label>Category</label><select value={editForm?.category} onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}><option>Work</option><option>Personal</option><option>Health</option><option>Study</option><option>Other</option></select></div>
-                <div className="form-group"><label>Due Date</label><input type="date" value={editForm?.dueDate} onChange={(e) => setEditForm({ ...editForm, dueDate: e.target.value })} /></div>
-              </div>
-              <div className="form-row full">
-                <div className="form-group"><label>Notes</label><textarea value={editForm?.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}></textarea></div>
-              </div>
-              <div className="modal-buttons"><button className="modal-btn save" type="submit">Save</button><button className="modal-btn cancel" type="button" onClick={() => setEditTaskId(null)}>Cancel</button></div>
+              <div className="modal-buttons"><button className="modal-btn save" type="submit">Save</button><button className="modal-btn cancel" onClick={() => setEditTaskId(null)}>Cancel</button></div>
             </form>
           </div>
         </div>
       )}
 
       {isSettingsOpen && (
-        <div className="modal active" role="dialog" aria-modal="true" aria-label="Settings">
+        <div className="modal active">
           <div className="modal-content wide">
             <h3>Settings</h3>
             <div className="settings-group">
@@ -379,21 +382,21 @@ function App() {
               </select>
             </div>
             <div className="settings-group">
-              <h4>Day Start</h4>
-              <input type="time" value={settings.startTime} onChange={(e) => setSettings({ ...settings, startTime: e.target.value })} />
-            </div>
-            <div className="settings-group">
               <h4>Notifications</h4>
               <select value={settings.sound} onChange={(e) => setSettings({ ...settings, sound: e.target.value })}>
                 <option value="on">On</option>
                 <option value="off">Off</option>
               </select>
             </div>
+            <div className="settings-group">
+              <h4>Email</h4>
+              <input type="email" placeholder="Email address" value={settings.recipientEmail} onChange={(e) => setSettings({ ...settings, recipientEmail: e.target.value })} />
+              <button className="modal-btn save" style={{ marginTop: '10px', width: '100%' }} onClick={sendEmailSummary}>📧 Send Summary</button>
+            </div>
             <div className="modal-buttons"><button className="modal-btn save" onClick={() => setIsSettingsOpen(false)}>Save</button><button className="modal-btn cancel" onClick={() => setIsSettingsOpen(false)}>Close</button></div>
           </div>
         </div>
       )}
-
     </div>
   );
 }

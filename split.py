@@ -1,0 +1,22 @@
+﻿from pathlib import Path
+src = Path(r'c:\Users\HP\Downloads\task-planner-fixed.html').read_text(encoding='utf-8')
+style_start = src.find('<style>')
+style_end = src.find('</style>', style_start)
+if style_start==-1 or style_end==-1:
+    raise SystemExit('style block not found')
+style = src[style_start+len('<style>'):style_end].strip()
+body_start = src.find('<body')
+if body_start == -1: raise SystemExit('body start not found')
+body_open_end = src.find('>', body_start)
+body_end = src.rfind('</body>')
+if body_end == -1: raise SystemExit('body end not found')
+body = src[body_open_end+1:body_end].strip()
+script_start = src.rfind('<script>', 0, body_end)
+script_end = src.rfind('</script>', 0, body_end)
+if script_start==-1 or script_end==-1: raise SystemExit('script block not found')
+script = src[script_start+len('<script>'):script_end].strip()
+# Write split files
+Path('index.html').write_text(f"""<!DOCTYPE html>\n<html lang='en'>\n<head>\n<meta charset='UTF-8'>\n<meta name='viewport' content='width=device-width, initial-scale=1.0'>\n<title>Daily Task Planner</title>\n<link rel='stylesheet' href='styles.css'>\n<script src='https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js'></script>\n<script src='https://cdn.jsdelivr.net/npm/emailjs-com@2.6.4/dist/email.min.js'></script>\n<script src='https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js' integrity='sha512-ljq2p6xQqJyQF73Ib39mLx5XXUhb4I4JD1H7evPbYdbaNfEObwIf2Okb9m3fK2Hu+FtSaeNIVp1A9qU5GFjVCQ==' crossorigin='anonymous' referrerpolicy='no-referrer'></script>\n<script src='https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/ScrollTrigger.min.js' integrity='sha512-qNqZ1fJwDB6WnQlLmc8RqQv6Or4jgBuCMG8kBWhQRi0t6nKxOt9HYmgnRSBIwx4nMgoXLpuMrKTVW1n31xqLLg==' crossorigin='anonymous' referrerpolicy='no-referrer'></script>\n</head>\n<body>\n{body}\n<script src='script.js'></script>\n</body>\n</html>""", encoding='utf-8')
+Path('styles.css').write_text(style, encoding='utf-8')
+Path('script.js').write_text(script, encoding='utf-8')
+print('done', len(style), len(body), len(script))
