@@ -1,4 +1,4 @@
-﻿const { useState, useEffect, useMemo } = React;
+﻿const { useState, useEffect, useMemo, useRef } = React;
 
 const QUOTES = [
   'Start where you are. Use what you have. Do what you can.',
@@ -7,6 +7,57 @@ const QUOTES = [
   'Set your goals high, and don\'t stop till you get there.',
   'Your future is created by what you do today, not tomorrow.'
 ];
+
+// Performance monitoring & testing utilities
+const AppDebug = {
+  testResults: [],
+  
+  log(test, result, details = '') {
+    const entry = { test, result, timestamp: new Date().toLocaleTimeString(), details };
+    this.testResults.push(entry);
+    console.log(`[${result ? '✓' : '✗'}] ${test}`, details);
+  },
+  
+  runTests() {
+    console.clear();
+    console.log('=== APP VALIDATION TEST SUITE ===\n');
+    this.testResults = [];
+    
+    // Test 1: LocalStorage availability
+    try {
+      localStorage.setItem('test', 'ok');
+      localStorage.removeItem('test');
+      this.log('LocalStorage', true);
+    } catch (e) {
+      this.log('LocalStorage', false, e.message);
+    }
+    
+    // Test 2: React environment
+    try {
+      this.log('React loaded', typeof React !== 'undefined');
+    } catch (e) {
+      this.log('React loaded', false);
+    }
+    
+    // Test 3: Chart.js
+    try {
+      this.log('Chart.js loaded', typeof Chart !== 'undefined');
+    } catch (e) {
+      this.log('Chart.js loaded', false);
+    }
+    
+    console.log('\n=== RESULTS ===');
+    const passed = this.testResults.filter(r => r.result).length;
+    const total = this.testResults.length;
+    console.log(`Passed: ${passed}/${total}`);
+    return { passed, total, results: this.testResults };
+  }
+};
+
+// Run tests on load
+if (typeof window !== 'undefined') {
+  window.runAppTests = () => AppDebug.runTests();
+}
 
 function getWeeklyStats(tasks) {
   const lastSevenDays = Array.from({ length: 7 }, (_, i) => {
@@ -50,8 +101,63 @@ function getWeeklyStats(tasks) {
   };
 }
 
+function getWeeklyChartData(tasks) {
+  const dayLabels = [];
+  const completedData = [];
+  const pendingData = [];
+  const percentageData = [];
+
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const dayKey = d.toISOString().split('T')[0];
+    dayLabels.push(d.toLocaleDateString(undefined, { weekday: 'short' }));
+
+    const createdToday = tasks.filter((t) => t.createdAt.slice(0, 10) === dayKey);
+    const completedToday = tasks.filter((t) => t.completedAt && t.completedAt.slice(0, 10) === dayKey);
+
+    const completedCount = completedToday.length;
+    const pendingCount = Math.max(0, createdToday.length - completedCount);
+    const total = createdToday.length;
+    const percent = total ? Math.round((completedCount / total) * 100) : 0;
+
+    completedData.push(completedCount);
+    pendingData.push(pendingCount);
+    percentageData.push(percent);
+  }
+
+  return { dayLabels, completedData, pendingData, percentageData };
+}
+
+function getHeatmapData(tasks) {
+  const res = [];
+  const today = new Date();
+  const start = new Date(today);
+  start.setDate(start.getDate() - 29);
+
+  for (let i = 0; i < 30; i++) {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    const key = d.toISOString().split('T')[0];
+    const completed = tasks.filter((t) => t.completedAt && t.completedAt.slice(0, 10) === key).length;
+    res.push({
+      date: key,
+      completed,
+      today: d.toDateString() === today.toDateString()
+    });
+  }
+
+  return res;
+}
+
 function getNextId() {
   return Date.now() + Math.floor(Math.random() * 1000);
+}
+
+function formatDuration(seconds) {
+  const mm = String(Math.floor(seconds / 60)).padStart(2, '0');
+  const ss = String(seconds % 60).padStart(2, '0');
+  return `${mm}:${ss}`;
 }
 
 function readStorage(key, fallback) {
@@ -74,6 +180,11 @@ function App() {
   const [editForm, setEditForm] = useState(null);
   const [notification, setNotification] = useState('');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [emailEnabled, setEmailEnabled] = useState(() => readStorage('emailEnabled', false));
+  const [carryBannerVisible, setCarryBannerVisible] = useState(false);
+  const [carryCount, setCarryCount] = useState(0);
+  const [undoTask, setUndoTask] = useState(null);
+  const chartRef = useRef(null);
 
   useEffect(() => {
     localStorage.setItem('tasks', JSON.stringify(tasks));
@@ -83,6 +194,52 @@ function App() {
     localStorage.setItem('appSettings', JSON.stringify(settings));
     document.body.classList.toggle('dark-mode', settings.theme === 'dark');
   }, [settings]);
+
+  useEffect(() => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const dayKey = yesterday.toISOString().split('T')[0];
+    const incomplete = tasks.filter((t) => !t.completed && t.createdAt.slice(0, 10) === dayKey).length;
+    setCarryCount(incomplete);
+    setCarryBannerVisible(incomplete > 0);
+  }, [tasks]);
+
+  useEffect(() => {
+    const chartEl = chartRef.current;
+    if (!chartEl) return;
+    const { dayLabels, completedData, pendingData, percentageData } = getWeeklyChartData(tasks);
+
+    const weekChart = new Chart(chartEl, {
+      type: 'bar',
+      data: {
+        labels: dayLabels,
+        datasets: [
+          { label: 'Completed', data: completedData, backgroundColor: '#10b981', stack: 'a' },
+          { label: 'Pending', data: pendingData, backgroundColor: '#3b82f6', stack: 'a' },
+          { label: 'Completion %', data: percentageData, type: 'line', borderColor: '#f59e0b', backgroundColor: '#f59e0b', yAxisID: 'y1', tension: 0.35 }
+        ]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { position: 'top' }},
+        scales: {
+          y: {
+            beginAtZero: true,
+            title: { display: true, text: 'Tasks' }
+          },
+          y1: {
+            position: 'right',
+            beginAtZero: true,
+            max: 100,
+            grid: { drawOnChartArea: false },
+            title: { display: true, text: 'Completion %' }
+          }
+        }
+      }
+    });
+
+    return () => weekChart.destroy();
+  }, [tasks]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -96,6 +253,24 @@ function App() {
     const tm = setTimeout(() => setNotification(''), 2500);
     return () => clearTimeout(tm);
   }, [notification]);
+
+  useEffect(() => {
+    const activeTask = tasks.find((t) => t.timerActive && t.timerRemainingSeconds > 0);
+    if (!activeTask) return;
+    const timer = setInterval(() => {
+      setTasks((prev) => prev.map((t) => {
+        if (!t.timerActive) return t;
+        const remaining = t.timerRemainingSeconds - 1;
+        if (remaining <= 0) {
+          showNotify(`Time up for \'${t.name}\'`);
+          return { ...t, timerActive: false, timerRemainingSeconds: 0 };
+        }
+        return { ...t, timerRemainingSeconds: remaining };
+      }));
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [tasks]);
 
   const today = new Date();
 
@@ -129,6 +304,9 @@ function App() {
     return result;
   }, [tasks, filter, search]);
 
+  const weeklyChartData = useMemo(() => getWeeklyChartData(tasks), [tasks]);
+  const heatmapData = useMemo(() => getHeatmapData(tasks), [tasks]);
+
   const completedCount = tasks.filter((t) => t.completed).length;
   const progress = tasks.length ? Math.round((completedCount / tasks.length) * 100) : 0;
 
@@ -138,14 +316,30 @@ function App() {
 
   const addTask = (e) => {
     e.preventDefault();
-    if (!form.name.trim() || !form.duration || Number(form.duration) < 1) {
-      showNotify('Please fill task name and duration');
+    
+    // Enhanced validation
+    if (!form.name.trim()) {
+      showNotify('❌ Task name is required');
       return;
     }
+    if (form.name.trim().length < 3) {
+      showNotify('❌ Task name must be at least 3 characters');
+      return;
+    }
+    if (!form.duration || Number(form.duration) < 1) {
+      showNotify('❌ Duration must be at least 1 minute');
+      return;
+    }
+    if (Number(form.duration) > 1440) {
+      showNotify('❌ Duration cannot exceed 24 hours');
+      return;
+    }
+
+    const durationMinutes = Number(form.duration);
     const newTask = {
       id: getNextId(),
       name: form.name.trim(),
-      duration: Number(form.duration),
+      duration: durationMinutes,
       priority: form.priority,
       category: form.category,
       notes: form.notes.trim(),
@@ -153,13 +347,16 @@ function App() {
       dueDate: form.dueDate || '',
       recurring: form.recurring,
       completed: false,
+      completedAt: null,
       actualDuration: null,
+      timerActive: false,
+      timerRemainingSeconds: durationMinutes * 60,
       createdAt: new Date().toISOString()
     };
 
     setTasks((prev) => [...prev, newTask]);
     resetForm();
-    showNotify('Task added!');
+    showNotify('✅ Task added successfully!');
   };
 
   const updateTask = (id, updates) => {
@@ -167,12 +364,26 @@ function App() {
   };
 
   const deleteTask = (id) => {
+    const target = tasks.find((t) => t.id === id);
+    if (target) setUndoTask(target);
     setTasks((prev) => prev.filter((t) => t.id !== id));
     showNotify('Task deleted');
   };
 
+  const toggleTaskTimer = (task) => {
+    setTasks((prev) => prev.map((t) => {
+      if (t.id !== task.id) return t;
+      if (t.timerRemainingSeconds <= 0) return t;
+      return { ...t, timerActive: !t.timerActive };
+    }));
+  };
+
   const completeTask = (task) => {
-    updateTask(task.id, { completed: !task.completed });
+    const now = new Date().toISOString();
+    updateTask(task.id, {
+      completed: !task.completed,
+      completedAt: task.completed ? null : now
+    });
     showNotify(task.completed ? 'Task unmarked' : 'Task completed!');
   };
 
@@ -187,7 +398,8 @@ function App() {
       showNotify('Invalid edit values');
       return;
     }
-    setTasks((prev) => prev.map((t) => (t.id === editTaskId ? { ...t, ...editForm, duration: Number(editForm.duration) } : t)));
+    const durationMinutes = Number(editForm.duration);
+    setTasks((prev) => prev.map((t) => (t.id === editTaskId ? { ...t, ...editForm, duration: durationMinutes, timerRemainingSeconds: durationMinutes * 60 } : t)));
     setEditTaskId(null);
     showNotify('Task updated');
   };
@@ -198,16 +410,87 @@ function App() {
     showNotify('All tasks cleared');
   };
 
+  const carryForward = () => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const dayKey = yesterday.toISOString().split('T')[0];
+    const incomplete = tasks.filter((t) => !t.completed && t.createdAt.slice(0, 10) === dayKey);
+    if (!incomplete.length) {
+      setCarryBannerVisible(false);
+      return;
+    }
+    const carriedTasks = incomplete.map((t) => ({
+      ...t,
+      id: getNextId(),
+      createdAt: new Date().toISOString(),
+      completed: false,
+      completedAt: null,
+      timerActive: false,
+      timerRemainingSeconds: (t.duration || 0) * 60
+    }));
+    setTasks((prev) => [...prev, ...carriedTasks]);
+    setCarryBannerVisible(false);
+    showNotify(`${carriedTasks.length} tasks carried forward`);
+  };
+
+  const dismissCarry = () => setCarryBannerVisible(false);
+
+  const undoDelete = () => {
+    if (!undoTask) return;
+    setTasks((prev) => [undoTask, ...prev]);
+    setUndoTask(null);
+    showNotify('Delete undone');
+  };
+
   const toggleTheme = () => {
     setSettings((prev) => ({ ...prev, theme: prev.theme === 'dark' ? 'light' : 'dark' }));
   };
 
-  const sendEmailSummary = () => {
-    if (!settings.recipientEmail || !settings.recipientEmail.includes('@')) {
-      showNotify('Please set a valid email address');
+  const toggleEmail = () => {
+    setEmailEnabled((prev) => {
+      const next = !prev;
+      localStorage.setItem('emailEnabled', JSON.stringify(next));
+      showNotify(next ? 'Email notifications enabled' : 'Email notifications disabled');
+      return next;
+    });
+  };
+
+  const sendEmailSummary = async (type = 'Summary') => {
+    if (!emailEnabled) {
+      showNotify('⚠️ Enable email in settings first');
       return;
     }
-    showNotify('Email sent successfully!');
+    if (!settings.recipientEmail || !settings.recipientEmail.includes('@')) {
+      showNotify('❌ Set valid email in settings');
+      return;
+    }
+    
+    showNotify('📧 Preparing ' + type + '...');
+    
+    const completedCount = tasks.filter((t) => t.completed).length;
+    const completionRate = tasks.length ? Math.round((completedCount / tasks.length) * 100) : 0;
+    
+    const tasksSummary = tasks.slice(0, 10).map(t => 
+      `• ${t.name} (${t.duration}m, ${t.completed ? '✓ Done' : '⏳ Pending'})`
+    ).join('\n') + (tasks.length > 10 ? `\n... and ${tasks.length - 10} more` : '');
+    
+    const emailContent = {
+      type: type,
+      recipient: settings.recipientEmail,
+      completionRate: completionRate,
+      tasksCount: tasks.length,
+      completedCount: completedCount,
+      tasksSummary: tasksSummary,
+      timestamp: new Date().toLocaleString()
+    };
+    
+    // Simulate email processing with brief delay
+    setTimeout(() => {
+      // Show preview instead of actual sending (since backend not configured)
+      const previewMsg = `${type} Preview:\n${completionRate}% complete • ${completedCount}/${tasks.length} tasks done`;
+      showNotify('📭 ' + type + ' preview ready (Email service pending backend setup)');
+      console.log('Email content:', emailContent);
+    }, 800);
   };
 
   const completedTasksCount = tasks.filter((t) => t.completed).length;
@@ -217,6 +500,12 @@ function App() {
   return (
     <div className="container">
       {notification && <div className="notification">{notification}</div>}
+      {undoTask && (
+        <div className="undo-bar">
+          <span>Task "{undoTask.name}" deleted.</span>
+          <button onClick={undoDelete}>Undo</button>
+        </div>
+      )}
       
       <header>
         <div>
@@ -232,6 +521,28 @@ function App() {
           <button className="theme-toggle" onClick={toggleTheme}>{settings.theme === 'dark' ? '☀️' : '🌙'}</button>
         </div>
       </header>
+
+      <div className={`email-section${emailEnabled ? ' enabled' : ''}`}>
+        <div className="email-header">
+          <span className="email-status-text">📧 Emails: {emailEnabled ? 'Enabled' : 'Disabled'}</span>
+          <button className={`email-toggle-btn${emailEnabled ? ' enabled' : ''}`} onClick={toggleEmail}>{emailEnabled ? 'Disable Emails' : 'Enable Emails'}</button>
+        </div>
+        <div className={`email-buttons${emailEnabled ? ' show' : ''}`}>
+          <button className="email-send-btn" onClick={() => sendEmailSummary('Progress Report')}>📊 Send Progress</button>
+          <button className="email-send-btn" onClick={() => sendEmailSummary('EOD Report')}>📋 Send EOD</button>
+          <button className="email-send-btn" onClick={() => sendEmailSummary('Weekly Report')}>📈 Send Weekly</button>
+        </div>
+      </div>
+
+      {carryBannerVisible && carryCount > 0 && (
+        <div className="carry-banner">
+          <span>📋 You have <strong>{carryCount}</strong> incomplete tasks from yesterday. Carry them forward?</span>
+          <div className="carry-banner-btns">
+            <button className="carry-yes" onClick={carryForward}>Yes, carry forward</button>
+            <button className="carry-no" onClick={dismissCarry}>No thanks</button>
+          </div>
+        </div>
+      )}
 
       <div className="quote-bar">💬 {quote}</div>
 
@@ -264,6 +575,34 @@ function App() {
             <div className="stat-value">{weeklyStats.worstDay}</div>
             <div className="stat-label">Worst Day</div>
           </div>
+        </div>
+        <div className="chart-container">
+          <canvas ref={chartRef} id="weeklyChart"></canvas>
+        </div>
+      </div>
+
+      <div className="heatmap-section">
+        <h2>📅 Monthly Activity</h2>
+        <div className="heatmap-grid">
+          {heatmapData.map((cell) => {
+            let level = '0';
+            if (cell.completed >= 5) level = 'perfect';
+            else if (cell.completed >= 3) level = 'high';
+            else if (cell.completed >= 1) level = 'mid';
+            else level = 'low';
+            return (
+              <div key={cell.date} className={`heatmap-cell ${cell.today ? 'today' : ''}`} data-pct={cell.completed === 0 ? '0' : level}>
+                <span className="heatmap-tooltip">{cell.date}: {cell.completed} done</span>
+              </div>
+            );
+          })}
+        </div>
+        <div className="heatmap-legend">
+          Less <span className="heatmap-legend-cell hml-0"></span>
+          <span className="heatmap-legend-cell hml-low"></span>
+          <span className="heatmap-legend-cell hml-mid"></span>
+          <span className="heatmap-legend-cell hml-high"></span>
+          <span className="heatmap-legend-cell hml-perfect"></span> More
         </div>
       </div>
 
@@ -311,6 +650,12 @@ function App() {
               </select>
             </div>
           </div>
+          <div className="form-row full">
+            <div className="form-group">
+              <label>Notes</label>
+              <textarea className="task-notes-input" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Optional notes"></textarea>
+            </div>
+          </div>
           <button type="submit" className="submit-btn">Add to Schedule</button>
         </form>
       </div>
@@ -344,6 +689,14 @@ function App() {
                     {task.dueDate && <span className="badge badge-due">Due {task.dueDate}</span>}
                     <span>⏱️ {task.duration}m</span>
                     {task.notes && <span>📝 {task.notes}</span>}
+                  </div>
+                  <div className="task-meta" style={{ marginTop: '6px' }}>
+                    <span className={`task-timer-display ${task.timerRemainingSeconds === 0 ? 'urgent' : ''}`}>
+                      {formatDuration(task.timerRemainingSeconds || task.duration * 60)}
+                    </span>
+                    <button className={`task-timer-btn${task.timerActive ? ' running' : ''}`} onClick={() => toggleTaskTimer(task)}>
+                      {task.timerActive ? 'Pause' : (task.timerRemainingSeconds <= 0 ? 'Done' : 'Start')}
+                    </button>
                   </div>
                 </div>
                 <button className="task-edit" onClick={() => startEdit(task)}>✏️</button>
@@ -391,9 +744,12 @@ function App() {
             <div className="settings-group">
               <h4>Email</h4>
               <input type="email" placeholder="Email address" value={settings.recipientEmail} onChange={(e) => setSettings({ ...settings, recipientEmail: e.target.value })} />
-              <button className="modal-btn save" style={{ marginTop: '10px', width: '100%' }} onClick={sendEmailSummary}>📧 Send Summary</button>
+              <button type="button" className="modal-btn save" style={{ marginTop: '10px', width: '100%' }} onClick={toggleEmail}>{emailEnabled ? 'Disable Email' : 'Enable Email'}</button>
             </div>
-            <div className="modal-buttons"><button className="modal-btn save" onClick={() => setIsSettingsOpen(false)}>Save</button><button className="modal-btn cancel" onClick={() => setIsSettingsOpen(false)}>Close</button></div>
+            <div className="settings-group">
+              <button type="button" className="modal-btn save" style={{ marginTop: '10px', width: '100%' }} onClick={() => sendEmailSummary('Summary')}>📧 Send Summary</button>
+            </div>
+            <div className="modal-buttons"><button type="button" className="modal-btn save" onClick={() => setIsSettingsOpen(false)}>Save</button><button type="button" className="modal-btn cancel" onClick={() => setIsSettingsOpen(false)}>Close</button></div>
           </div>
         </div>
       )}
