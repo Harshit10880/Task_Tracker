@@ -1,16 +1,31 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Task Planner - React CDN</title>
+  <title>Daily Task Planner</title>
   <link rel="stylesheet" href="styles.css" />
+
+  <!-- React -->
   <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+
+  <!-- EmailJS v4 — must init BEFORE script.js runs -->
   <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+  <script>
+    // ✅ FIX: Initialize EmailJS with public key BEFORE React app mounts.
+    // Without this call, emailjs.send() throws "The public key is required" error.
+    (function () {
+      emailjs.init({
+        publicKey: "IjtA8YEyMttCOXNBm",
+      });
+    })();
+  </script>
 </head>
 
 <body>

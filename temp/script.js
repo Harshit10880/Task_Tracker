@@ -209,6 +209,11 @@ function App() {
     if (!chartEl) return;
     const { dayLabels, completedData, pendingData, percentageData } = getWeeklyChartData(tasks);
 
+    // ✅ FIX: Destroy any existing chart on this canvas before creating a new one.
+    // Chart.js throws "Canvas is already in use" if we don't clean up first.
+    const existingChart = Chart.getChart(chartEl);
+    if (existingChart) existingChart.destroy();
+
     const weekChart = new Chart(chartEl, {
       type: 'bar',
       data: {
@@ -472,7 +477,8 @@ function App() {
       showNotify('⚠️ Enable email in settings first');
       return;
     }
-    if (!settings.recipientEmail || !settings.recipientEmail.includes('@')) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!settings.recipientEmail || !emailRegex.test(settings.recipientEmail)) {
       showNotify('❌ Set valid email in settings');
       return;
     }
@@ -502,19 +508,14 @@ function App() {
     };
 
     try {
-      if (serviceID === "YOUR_SERVICE_ID") {
-        showNotify('⚠️ EmailJS not configured. Please add your credentials in script.js');
-        console.log('Email content that would have been sent:', templateParams);
-        return;
-      }
-
-      await emailjs.send(serviceID, templateID, templateParams, {
-        publicKey: userID.trim(),
-      });
-      showNotify('✅ ' + type + ' sent successfully to ' + settings.recipientEmail);
+      // ✅ FIX: emailjs.init() is called in index.html before this script loads.
+      // We call send() with 3 args only — no 4th publicKey arg needed in v4.
+      await emailjs.send(serviceID, templateID, templateParams);
+      showNotify('✅ ' + type + ' sent to ' + settings.recipientEmail);
     } catch (error) {
-      console.error('Email sending failed:', error);
-      showNotify('❌ Failed to send email. Check console for details.');
+      console.error('EmailJS send failed:', error);
+      const msg = error?.text || error?.message || String(error);
+      showNotify('❌ Email failed: ' + msg);
     }
   };
 
